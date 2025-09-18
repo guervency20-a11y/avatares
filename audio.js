@@ -131,6 +131,7 @@ const AudioPlayer = (() => {
         currentVideoIndex: 0,
         currentSpeed: 1,
         dragStartPos: { x: 0, y: 0 },
+        isDragging: false,
         isHiddenByContainer: false
     };
 
@@ -144,6 +145,18 @@ const AudioPlayer = (() => {
         
         // Observar videos para lazy loading
         initVideoObserver();
+
+        // Posicionar el reproductor en la esquina superior derecha
+        positionPlayerTopRight();
+    }
+
+    // CORRECCIÓN 1: Posicionamiento inicial correcto
+    function positionPlayerTopRight() {
+        const margin = 20;
+        elements.audioPlayer.style.right = margin + 'px';
+        elements.audioPlayer.style.top = margin + 'px';
+        elements.audioPlayer.style.left = 'auto';
+        elements.audioPlayer.style.bottom = 'auto';
     }
 
     function startSleepVideo() {
@@ -163,19 +176,23 @@ const AudioPlayer = (() => {
         elements.prevButton.addEventListener('click', () => navigateSequence('prev'));
         elements.nextButton.addEventListener('click', () => navigateSequence('next'));
 
-        // Lógica mejorada para el avatar cerrado (diferencia clic y arrastre)
+        // CORRECCIÓN 2: Mejorar detección de clic vs arrastre
         elements.playerClosed.addEventListener('mousedown', (e) => {
             state.dragStartPos.x = e.clientX;
             state.dragStartPos.y = e.clientY;
+            state.isDragging = false;
         });
 
         elements.playerClosed.addEventListener('mouseup', (e) => {
-            const deltaX = Math.abs(e.clientX - state.dragStartPos.x);
-            const deltaY = Math.abs(e.clientY - state.dragStartPos.y);
-            // Si el cursor se movió menos de 10px, se considera un clic
-            if (deltaX < 10 && deltaY < 10) {
-                toggleNarratorPlayback();
+            if (!state.isDragging) {
+                const deltaX = Math.abs(e.clientX - state.dragStartPos.x);
+                const deltaY = Math.abs(e.clientY - state.dragStartPos.y);
+                // Si el cursor se movió menos de 5px, se considera un clic
+                if (deltaX < 5 && deltaY < 5) {
+                    toggleNarratorPlayback();
+                }
             }
+            state.isDragging = false;
         });
 
         // eventos del avatar speak
@@ -291,7 +308,7 @@ const AudioPlayer = (() => {
         elements.avatarVideoSpeak.classList.remove('active');
         try { elements.avatarVideoSpeak.pause(); } catch (e) {}
         
-        // Reactivar video de espera
+        // CORRECCIÓN 3: Reactivar video de espera con el narrador actual
         const narrator = narratorData[state.currentNarratorId];
         if (narrator && narrator.sleep) {
             elements.avatarVideoSleep.dataset.src = narrator.sleep;
@@ -350,7 +367,7 @@ const AudioPlayer = (() => {
         }
     }
 
-    // cambiar narrador
+    // CORRECCIÓN 4: Cambiar narrador correctamente
     function changeNarrator(narratorId, startPlaying = false) {
         // Detener reproducción actual
         MediaManager.pauseAllVideos();
@@ -365,15 +382,23 @@ const AudioPlayer = (() => {
 
         const narrator = narratorData[narratorId];
         if (narrator) {
+            // Actualizar imagen de preview
             elements.avatarImageSleep.src = narrator.preview;
             
-            // Configurar y reproducir video de espera
+            // CORRECCIÓN: Actualizar correctamente el video de espera
+            elements.avatarVideoSleep.classList.remove('active');
+            elements.avatarVideoSleep.pause();
             elements.avatarVideoSleep.dataset.src = narrator.sleep;
+            elements.avatarVideoSleep.removeAttribute('data-loaded'); // Forzar recarga
             ensureSrcLoaded(elements.avatarVideoSleep);
-            if (!state.isNarratorPlaying) {
-                elements.avatarVideoSleep.play().catch(e => console.error("Error al reproducir video de espera:", e));
-                elements.avatarVideoSleep.classList.add('active');
-                markLoopActive(elements.avatarVideoSleep, true);
+            
+            if (!startPlaying) {
+                // Solo iniciar el video de espera si no se va a reproducir inmediatamente
+                setTimeout(() => {
+                    elements.avatarVideoSleep.play().catch(e => console.error("Error al reproducir video de espera:", e));
+                    elements.avatarVideoSleep.classList.add('active');
+                    markLoopActive(elements.avatarVideoSleep, true);
+                }, 100);
             }
         }
 
@@ -498,14 +523,15 @@ const AudioPlayer = (() => {
         }
     }
 
-    // Función para cargar un video desde data-src
+    // CORRECCIÓN 5: Mejorar carga de videos
     function ensureSrcLoaded(video) {
         if (!video) return;
         const ds = video.dataset && video.dataset.src;
         if (!ds) return;
-        if (video.getAttribute('data-loaded') === 'true') return;
+        if (video.getAttribute('data-loaded') === 'true' && video.src === ds) return;
         video.src = ds;
         video.setAttribute('data-loaded', 'true');
+        console.log('Video cargado:', ds); // Debug
     }
 
     // Pausar otros videos en bucle
@@ -557,7 +583,7 @@ const AudioPlayer = (() => {
     };
 })();
 
-// Módulo para gestionar los contenedores de contenido - MEJORADO
+// CORRECCIÓN 6: Módulo para gestionar los contenedores de contenido - CORREGIDO
 const ContentContainers = (() => {
     const containers = document.querySelectorAll('.content-container');
     let activeContainer = null;
@@ -568,7 +594,10 @@ const ContentContainers = (() => {
             const videoOverlay = container.querySelector('.overlay-video');
             const videoIndex = parseInt(playBtn.getAttribute('data-video-index'), 10);
             
-            playBtn.addEventListener('click', () => {
+            // CORRECCIÓN: Usar solo un evento click sin conflictos de arrastre
+            playBtn.addEventListener('click', (e) => {
+                e.stopPropagation(); // Prevenir propagación
+                
                 // Si ya es el contenedor activo, detener la reproducción
                 if (activeContainer === container) {
                     stopContainer(container);
@@ -616,6 +645,7 @@ const ContentContainers = (() => {
         });
     }
 
+    // CORRECCIÓN 7: Mejorar reproducción de contenedores
     function playContainer(container, videoIndex) {
         const narrator = AudioPlayer.getCurrentNarrator();
         const videoOverlay = container.querySelector('.overlay-video');
@@ -624,13 +654,20 @@ const ContentContainers = (() => {
         const audioIndicator = container.querySelector('.audio-indicator');
         
         if (!narrator || !narrator.speakSequence || videoIndex > narrator.speakSequence.length) {
-            console.error("No hay video disponible para este índice");
+            console.error("No hay video disponible para este índice:", videoIndex);
             return;
         }
         
-        // Usar el último video disponible si el índice es demasiado alto
-        const actualIndex = Math.min(videoIndex, narrator.speakSequence.length - 1);
+        // CORRECCIÓN: Usar índice correcto (videoIndex - 1 porque es base 1)
+        const actualIndex = Math.min(videoIndex - 1, narrator.speakSequence.length - 1);
         const videoSrc = narrator.speakSequence[actualIndex];
+        
+        console.log('Reproduciendo video:', videoSrc, 'para contenedor con índice:', videoIndex);
+        
+        // CORRECCIÓN: Asegurar que el video se carga correctamente
+        videoOverlay.dataset.src = videoSrc;
+        videoOverlay.removeAttribute('data-loaded'); // Forzar recarga
+        ensureSrcLoaded(videoOverlay);
         
         // Configurar y reproducir el video
         MediaManager.playVideo(videoOverlay, videoSrc);
@@ -675,6 +712,17 @@ const ContentContainers = (() => {
         }
     }
 
+    // CORRECCIÓN 8: Función helper para cargar videos
+    function ensureSrcLoaded(video) {
+        if (!video) return;
+        const ds = video.dataset && video.dataset.src;
+        if (!ds) return;
+        if (video.getAttribute('data-loaded') === 'true' && video.src === ds) return;
+        video.src = ds;
+        video.setAttribute('data-loaded', 'true');
+        console.log('Container video cargado:', ds); // Debug
+    }
+
     init();
 
     return {
@@ -687,15 +735,13 @@ const ContentContainers = (() => {
     'use strict';
     
     const player = document.querySelector('.audio-player');
+    const playerClosed = document.querySelector('.player-closed');
     let isDragging = false;
     let startX, startY, initialLeft, initialTop;
 
     function startDrag(e) {
         // Solo arrastrar desde el avatar cerrado
         if (!e.target.closest('.player-closed')) return;
-        
-        isDragging = true;
-        player.classList.add('dragging');
         
         // Obtener posición inicial
         const rect = player.getBoundingClientRect();
@@ -706,11 +752,27 @@ const ContentContainers = (() => {
         startX = e.clientX;
         startY = e.clientY;
         
+        // Preparar para posible arrastre
+        isDragging = false;
+        
         // Prevenir selección de texto durante el arrastre
         e.preventDefault();
     }
 
     function duringDrag(e) {
+        const deltaX = Math.abs(e.clientX - startX);
+        const deltaY = Math.abs(e.clientY - startY);
+        
+        // Si se mueve más de 5px, iniciar arrastre
+        if (!isDragging && (deltaX > 5 || deltaY > 5)) {
+            isDragging = true;
+            player.classList.add('dragging');
+            // CORRECCIÓN 9: Marcar estado de arrastre en el AudioPlayer
+            if (window.AudioPlayer && window.AudioPlayer.state) {
+                window.AudioPlayer.state.isDragging = true;
+            }
+        }
+        
         if (!isDragging) return;
         
         // Calcular nueva posición
@@ -728,17 +790,25 @@ const ContentContainers = (() => {
         // Aplicar nueva posición
         player.style.left = `${newX}px`;
         player.style.top = `${newY}px`;
+        player.style.right = 'auto';
+        player.style.bottom = 'auto';
     }
 
     function stopDrag() {
-        if (!isDragging) return;
+        if (isDragging) {
+            player.classList.remove('dragging');
+            
+            // Guardar la posición final para persistencia
+            initialLeft = parseInt(player.style.left) || 0;
+            initialTop = parseInt(player.style.top) || 0;
+        }
         
         isDragging = false;
-        player.classList.remove('dragging');
         
-        // Guardar la posición final para persistencia
-        initialLeft = parseInt(player.style.left) || 0;
-        initialTop = parseInt(player.style.top) || 0;
+        // CORRECCIÓN 10: Limpiar estado de arrastre en AudioPlayer
+        if (window.AudioPlayer && window.AudioPlayer.state) {
+            window.AudioPlayer.state.isDragging = false;
+        }
     }
 
     // Event listeners para mouse
@@ -752,17 +822,7 @@ const ContentContainers = (() => {
     });
     document.addEventListener('touchmove', (e) => {
         duringDrag(e.touches[0]);
+        e.preventDefault(); // Prevenir scroll en dispositivos móviles
     });
     document.addEventListener('touchend', stopDrag);
-    
-    // Posicionar inicialmente el reproductor en un lugar visible
-    window.addEventListener('load', () => {
-        const margin = 20;
-        const maxX = window.innerWidth - player.offsetWidth - margin;
-        const maxY = window.innerHeight - player.offsetHeight - margin;
-        
-        // Posicionar en la esquina inferior derecha con un margen
-        player.style.left = `${maxX - margin}px`;
-        player.style.top = `${maxY - margin}px`;
-    });
 })();
